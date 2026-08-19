@@ -1,0 +1,6 @@
+# agnes-media bundle patch: inserts the media tools plugin into a profile's
+# layer stack. The loader resolves `agnes-media` from the profile's installed
+# dependencies and mounts its named exports (name / inject / apply).
+- insert:
+    - id: agnes-media
+      name: 'agnes-media'

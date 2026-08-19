@@ -1,0 +1,18 @@
+# Dependencies installed by `dsh plugin add`
+node_modules/
+
+# Local test artifacts (generated samples)
+output_*.png
+output_*.mp4
+output_*.jpg
+output_*.webp
+
+# Legacy pre-rc plugin entry, kept locally only
+package.host.js
+
+# Environment and editor files
+.env
+.env.*
+*.local
+.DS_Store
+Thumbs.db
