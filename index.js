@@ -11,8 +11,8 @@
  * The key is read from the process environment at call time — never hardcode it.
  *
  * Endpoints:
- *   - International: https://apihub.agnes-ai.com    (default, needs proxy in mainland CN)
- *   - Domestic (CN): https://apihub.agnes-ai.cn     (set AGNES_MEDIA_DOMAIN=cn to switch)
+ *   - International: https://api.agnes-ai.com   (default; needs proxy in mainland CN)
+ *   - Domestic (CN): https://api.agnes-ai.cn    (set AGNES_MEDIA_DOMAIN=cn to switch)
  *   - Custom:        set AGNES_MEDIA_BASE_URL to any OpenAI-compatible Agnes endpoint
  *
  * This file is plain ESM loaded by the dsh Loader: it must not import any
@@ -45,11 +45,11 @@ function getBaseURL() {
 	const domain = (process.env.AGNES_MEDIA_DOMAIN || '').toLowerCase();
 	switch (domain) {
 		case 'cn':
-			_baseURL = 'https://apihub.agnes-ai.cn/v1';
+			_baseURL = 'https://api.agnes-ai.cn/v1';
 			break;
 		default:
 			// .com, empty string, or anything else
-			_baseURL = 'https://apihub.agnes-ai.com/v1';
+			_baseURL = 'https://api.agnes-ai.com/v1';
 			break;
 	}
 	return _baseURL;
@@ -125,8 +125,8 @@ function durationToFrames(seconds, fps) {
 /** Describe current endpoint configuration (for error messages). */
 function describeEndpoint() {
 	const url = getBaseURL();
-	if (url.includes('.cn')) return 'domestic node (.cn)';
-	return 'international node (.com)';
+	if (url.includes('.cn')) return 'domestic node (cn)';
+	return 'international node (com)';
 }
 
 /* ------------------------------------------------------------------ */
@@ -188,7 +188,7 @@ export function apply(ctx) {
 				throw new Error(
 					'AGNES_MEDIA_API_KEY (or AGNES_API_KEY) is not set.\n' +
 					'Configure the Agnes AI media API key as an environment variable before starting DSH.\n' +
-				'This key comes from Agnes AI — see platform.agnes-ai.com or platform.agnes-ai.cn.',
+					'This key comes from Agnes AI — see platform.agnes-ai.com or platform.agnes-ai.cn.',
 				);
 			}
 

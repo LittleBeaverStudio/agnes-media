@@ -56,7 +56,7 @@ If you get a `401` error saying the token is invalid:
 
 ```bash
 # 用 curl 直接测试，排除插件配置问题
-curl -s https://apihub.agnes-ai.cn/v1/models \
+curl -s https://api.agnes-ai.cn/v1/models \
   -H "Authorization: Bearer YOUR_KEY_HERE" | head -c 500
 ```
 
@@ -77,11 +77,11 @@ If this returns `{"error":{"message":"无效的令牌"...}}`, regenerate the key
 
 ### Choosing the right endpoint
 
-By default, this plugin connects to the **international node** (`apihub.agnes-ai.com`).
+By default, this plugin connects to the **international node** (`api.agnes-ai.com`).
 
 | If you… | Do this |
 |---------|---------|
-| Are in mainland China | Set `AGNES_MEDIA_DOMAIN=cn` before starting DSH to use the domestic node (`apihub.agnes-ai.cn`) — much faster, no proxy needed |
+| Are in mainland China | Set `AGNES_MEDIA_DOMAIN=cn` before starting DSH to use the domestic node (`api.agnes-ai.cn`) — much faster, no proxy needed |
 | Need to override the base URL completely | Set `AGNES_MEDIA_BASE_URL=https://your-custom-endpoint/v1` |
 | Want to keep international defaults | No extra config needed; just set your API key |
 
