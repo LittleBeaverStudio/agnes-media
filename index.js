@@ -7,9 +7,13 @@
  *   - generate_image  → POST /v1/images/generations  (agnes-image-2.1-flash)
  *   - generate_video  → POST /v1/videos + polling     (agnes-video-v2.0)
  *
- * Auth: AGNES_MEDIA_API_KEY (international service, platform.agnes-ai.com),
- * falling back to AGNES_API_KEY. The key is read from the process
- * environment at call time — never hardcode it.
+ * Auth: AGNES_MEDIA_API_KEY (or AGNES_API_KEY fallback).
+ * The key is read from the process environment at call time — never hardcode it.
+ *
+ * Endpoints:
+ *   - International: https://apihub.agnes-ai.com    (default, needs proxy in mainland CN)
+ *   - Domestic (CN): https://apihub.agnes-ai.cn     (set AGNES_MEDIA_DOMAIN=cn to switch)
+ *   - Custom:        set AGNES_MEDIA_BASE_URL to any OpenAI-compatible Agnes endpoint
  *
  * This file is plain ESM loaded by the dsh Loader: it must not import any
  * package that is not already resolvable from the running dsh installation,
@@ -20,9 +24,36 @@ export const name = 'agnes-media';
 export const inject = ['tools'];
 export const exports = [name];
 
-const BASE_URL = 'https://apihub.agnes-ai.com/v1';
+/* ------------------------------------------------------------------ */
+/*  Configurable endpoint — default .com; override via env vars       */
+/* ------------------------------------------------------------------ */
 const POLL_INTERVAL_MS = 3000;
 const MAX_POLL_COUNT = 60; // ~3 minutes of polling
+
+let _baseURL = null;
+
+/** Compute BASE_URL once. Order: explicit full URL > domain shorthand > default. */
+function getBaseURL() {
+	if (_baseURL !== null) return _baseURL;
+
+	const customFull = process.env.AGNES_MEDIA_BASE_URL;
+	if (customFull && typeof customFull === 'string') {
+		_baseURL = customFull.replace(/\/+$/, '') + '/v1';
+		return _baseURL;
+	}
+
+	const domain = (process.env.AGNES_MEDIA_DOMAIN || '').toLowerCase();
+	switch (domain) {
+		case 'cn':
+			_baseURL = 'https://apihub.agnes-ai.cn/v1';
+			break;
+		default:
+			// .com, empty string, or anything else
+			_baseURL = 'https://apihub.agnes-ai.com/v1';
+			break;
+	}
+	return _baseURL;
+}
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                           */
@@ -91,6 +122,13 @@ function durationToFrames(seconds, fps) {
 	return Math.min(441, 8 * n + 1);
 }
 
+/** Describe current endpoint configuration (for error messages). */
+function describeEndpoint() {
+	const url = getBaseURL();
+	if (url.includes('.cn')) return 'domestic node (.cn)';
+	return 'international node (.com)';
+}
+
 /* ------------------------------------------------------------------ */
 /*  Plugin apply hook                                                  */
 /* ------------------------------------------------------------------ */
@@ -148,7 +186,9 @@ export function apply(ctx) {
 			const key = apiKey();
 			if (!key) {
 				throw new Error(
-					'AGNES_MEDIA_API_KEY (or AGNES_API_KEY) is not set — configure the Agnes AI media API key first.',
+					'AGNES_MEDIA_API_KEY (or AGNES_API_KEY) is not set.\n' +
+					'Configure the Agnes AI media API key as an environment variable before starting DSH.\n' +
+				'This key comes from Agnes AI — see platform.agnes-ai.com or platform.agnes-ai.cn.',
 				);
 			}
 
@@ -163,7 +203,7 @@ export function apply(ctx) {
 			};
 			if (n > 1) body.n = n;
 
-			const res = await fetch(`${BASE_URL}/images/generations`, {
+			const res = await fetch(`${getBaseURL()}/images/generations`, {
 				method: 'POST',
 				headers: {
 					'Content-Type': 'application/json',
@@ -175,9 +215,15 @@ export function apply(ctx) {
 
 			const data = await res.json();
 			if (!res.ok) {
-				throw new Error(
-					`Image generation failed (${res.status}): ${data.error?.message || JSON.stringify(data)}`,
-				);
+				const msg = data.error?.message || JSON.stringify(data);
+				if (msg.includes('timeout') || msg.includes('connect')) {
+					throw new Error(
+						`Connection failed while calling Agnes AI (${describeEndpoint()}): ${msg}.\n` +
+						'If you are in mainland China and experiencing slow / timed-out requests,\n' +
+						'set AGNES_MEDIA_DOMAIN=cn to use the domestic API node.',
+					);
+				}
+				throw new Error(`Image generation failed (${res.status}): ${msg}`);
 			}
 
 			assertSignal(exec);
@@ -273,7 +319,9 @@ export function apply(ctx) {
 			const key = apiKey();
 			if (!key) {
 				throw new Error(
-					'AGNES_MEDIA_API_KEY (or AGNES_API_KEY) is not set — configure the Agnes AI media API key first.',
+					'AGNES_MEDIA_API_KEY (or AGNES_API_KEY) is not set.\n' +
+					'Configure the Agnes AI media API key as an environment variable before starting DSH.\n' +
+					'This key comes from Agnes AI — see platform.agnes-ai.com or platform.agnes-ai.cn.',
 				);
 			}
 
@@ -316,7 +364,7 @@ export function apply(ctx) {
 			}
 
 			/* Step 1 — submit job via POST /v1/videos */
-			const submitRes = await fetch(`${BASE_URL}/videos`, {
+			const submitRes = await fetch(`${getBaseURL()}/videos`, {
 				method: 'POST',
 				headers: {
 					'Content-Type': 'application/json',
@@ -328,9 +376,15 @@ export function apply(ctx) {
 
 			const submitData = await submitRes.json();
 			if (!submitRes.ok) {
-				throw new Error(
-					`Video submission failed (${submitRes.status}): ${submitData.error?.message || JSON.stringify(submitData)}`,
-				);
+				const msg = submitData.error?.message || JSON.stringify(submitData);
+				if (msg.toLowerCase().includes('timeout') || msg.toLowerCase().includes('connect')) {
+					throw new Error(
+						`Connection failed while calling Agnes AI (${describeEndpoint()}): ${msg}.\n` +
+						'If you are in mainland China and experiencing slow / timed-out requests,\n' +
+						'set AGNES_MEDIA_DOMAIN=cn to use the domestic API node.',
+					);
+				}
+				throw new Error(`Video submission failed (${submitRes.status}): ${msg}`);
 			}
 
 			/* Extract task_id — API returns it at top level */
@@ -348,7 +402,7 @@ export function apply(ctx) {
 				await sleep(POLL_INTERVAL_MS, exec.signal);
 				assertSignal(exec);
 
-				const statusRes = await fetch(`${BASE_URL}/videos/${encodeURIComponent(taskId)}`, {
+				const statusRes = await fetch(`${getBaseURL()}/videos/${encodeURIComponent(taskId)}`, {
 					headers: { Authorization: `Bearer ${key}` },
 					signal: exec.signal,
 				});

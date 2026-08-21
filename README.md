@@ -21,25 +21,54 @@ returns a 400:
 This plugin registers them as **tools** instead, which makes the correct
 endpoint calls on the agent's behalf.
 
+## ⚠️ Important: API Key & Node Selection
+
+### Getting your API Key
+
+1. Register at **[Agnes AI platform](https://platform.agnes-ai.cn)** (domestic China node) or **[international node](https://platform.agnes-ai.com)**.
+   - **Mainland China users**: use `.cn` platform — faster, no proxy needed.
+   - **Overseas users**: use `.com` platform.
+2. Create an API key in console settings → API Keys.
+3. The same key works on both `.cn` and `.com` nodes.
+
+### Choosing the right endpoint
+
+By default, this plugin connects to the **international node** (`apihub.agnes-ai.com`).
+
+| If you… | Do this |
+|---------|---------|
+| Are in mainland China | Set `AGNES_MEDIA_DOMAIN=cn` before starting DSH to use the domestic node (`apihub.agnes-ai.cn`) — much faster, no proxy needed |
+| Need to override the base URL completely | Set `AGNES_MEDIA_BASE_URL=https://your-custom-endpoint/v1` |
+| Want to keep international defaults | No extra config needed; just set your API key |
+
+#### Windows PowerShell
+```powershell
+$env:AGNES_API_KEY = "your-api-key"
+$env:AGNES_MEDIA_DOMAIN = "cn"   # mainland users add this line
+dsh web
+```
+
+#### macOS / Linux
+```bash
+export AGNES_API_KEY="your-api-key"
+export AGNES_MEDIA_DOMAIN=cn     # mainland users uncomment this line
+dsh web
+```
+
+---
+
 ## Requirements
 
 - DeepSeek Harness `0.1.0-rc.7` or later (uses the `cordis.patch.yml` bundle
-  format; the legacy inline `dsh.bundle.patch` object format is no longer
-  accepted by the loader).
-- An Agnes AI API key for the international service (`platform.agnes-ai.com`),
-  exposed as an environment variable before starting `dsh web`:
-  - `AGNES_MEDIA_API_KEY` (recommended), or
-  - `AGNES_API_KEY` as a fallback.
-
-  The key is read from the process environment at call time. It is never
-  hardcoded, logged, or persisted by this plugin.
+  format).
+- An Agnes AI API key (free), exposed via `AGNES_MEDIA_API_KEY` or `AGNES_API_KEY`.
 
 ## Installation
 
 From a local checkout:
 
 ```bash
-dsh plugin --profile web add file:/absolute/path/to/agnes-media
+dsh plugin --profile web add github:LittleBeaverStudio/agnes-media
 ```
 
 Then restart the DSH web server. `generate_image` and `generate_video` appear
@@ -74,7 +103,7 @@ until the video is ready (up to ~3 minutes).
 - `negative_prompt` (optional): Things to avoid in the output (e.g. `"blurry, shaky camera"`).
 - `seed` (optional): Random seed for reproducible generation.
 
-**Returns:** A direct video URL. The DSH web UI does not render `<video>` tags, so the agent presents the link to the user.
+**Returns:** A direct video URL.
 
 ## Frame count validation
 
@@ -88,6 +117,15 @@ If you pass `duration` instead, the plugin computes the nearest valid frame
 count automatically. If you pass `num_frames` directly, it is validated
 before submission — an invalid value is rejected immediately with a clear
 error message.
+
+## Environment variables reference
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `AGNES_MEDIA_API_KEY` | Agnes API key (preferred) | _(must be set)_ |
+| `AGNES_API_KEY` | Fallback API key | — |
+| `AGNES_MEDIA_DOMAIN` | Node selector: `cn` for domestic, anything else for international | `com` |
+| `AGNES_MEDIA_BASE_URL` | Full custom base URL (overrides domain). Must end in `/v1`. | _(auto from domain)_ |
 
 ## How results show up in the chat
 
