@@ -40,14 +40,14 @@ Both sites use the **same API Key** — only the endpoint URL differs.
 4. **IMPORTANT**: The key is shown **ONCE ONLY** — copy it immediately!
 5. The key format is `sk-xxxxxxxx...` (starts with `sk-`, ~50+ characters).
 
-### Troubleshooting: "无效的令牌" (Invalid Token)
+### Troubleshooting: "无效的令牌" (Invalid Token / 401)
 
 If you get a `401` error saying the token is invalid:
 
 | Check | Action |
 |-------|--------|
 | **Copied completely?** | Make sure the full `sk-...` string is pasted, no truncation |
-| **Extra spaces/newlines?** | Trim whitespace — `key.trim()` before using |
+| **Extra spaces/newlines?** | Trim whitespace — make sure no extra spaces at start or end |
 | **Key deleted?** | Go to Settings → API Keys and check if the key still exists |
 | **Wrong key?** | Create a new key and use it instead |
 | **Regional mismatch?** | `.cn` keys work on `.cn` endpoints, `.com` keys work on `.com` endpoints |
