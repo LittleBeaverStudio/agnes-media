@@ -21,6 +21,50 @@ returns a 400:
 This plugin registers them as **tools** instead, which makes the correct
 endpoint calls on the agent's behalf.
 
+## ⚠️ Getting Your API Key (Important!)
+
+### Platform URL
+
+| Region | URL |
+|--------|-----|
+| Mainland China | [platform.agnes-ai.cn](https://platform.agnes-ai.cn) |
+| International | [platform.agnes-ai.com](https://platform.agnes-ai.com) |
+
+Both sites use the **same API Key** — only the endpoint URL differs.
+
+### Step-by-step
+
+1. Log in to the platform that matches your region.
+2. Go to **Settings → API Keys** (or **我的 → API 密钥** in Chinese UI).
+3. Click **"Create New Key"** (创建新密钥).
+4. **IMPORTANT**: The key is shown **ONCE ONLY** — copy it immediately!
+5. The key format is `sk-xxxxxxxx...` (starts with `sk-`, ~50+ characters).
+
+### Troubleshooting: "无效的令牌" (Invalid Token)
+
+If you get a `401` error saying the token is invalid:
+
+| Check | Action |
+|-------|--------|
+| **Copied completely?** | Make sure the full `sk-...` string is pasted, no truncation |
+| **Extra spaces/newlines?** | Trim whitespace — `key.trim()` before using |
+| **Key deleted?** | Go to Settings → API Keys and check if the key still exists |
+| **Wrong key?** | Create a new key and use it instead |
+| **Regional mismatch?** | `.cn` keys work on `.cn` endpoints, `.com` keys work on `.com` endpoints |
+
+### Test your key manually
+
+```bash
+# 用 curl 直接测试，排除插件配置问题
+curl -s https://apihub.agnes-ai.cn/v1/models \
+  -H "Authorization: Bearer YOUR_KEY_HERE" | head -c 500
+```
+
+If this returns model data, your key is valid and the problem is elsewhere.
+If this returns `{"error":{"message":"无效的令牌"...}}`, regenerate the key.
+
+---
+
 ## ⚠️ Important: API Key & Node Selection
 
 ### Getting your API Key
@@ -43,14 +87,14 @@ By default, this plugin connects to the **international node** (`apihub.agnes-ai
 
 #### Windows PowerShell
 ```powershell
-$env:AGNES_API_KEY = "your-api-key"
+$env:AGNES_API_KEY = "sk-xxxxxxxx..."
 $env:AGNES_MEDIA_DOMAIN = "cn"   # mainland users add this line
 dsh web
 ```
 
 #### macOS / Linux
 ```bash
-export AGNES_API_KEY="your-api-key"
+export AGNES_API_KEY="sk-xxxxxxxx..."
 export AGNES_MEDIA_DOMAIN=cn     # mainland users uncomment this line
 dsh web
 ```
