@@ -1,11 +1,11 @@
 /**
- * agnes-media — DeepSeek Harness (dsh) bundle plugin.
+ * agnes-media – DeepSeek Harness (dsh) bundle plugin.
  *
  * Registers two host tools that route through the Agnes AI media endpoints
  * (the standard chat-completions route rejects these models with a 400):
  *
- *   - generate_image → POST /v1/images/generations  (agnes-image-2.1-flash)
- *   - generate_video → POST /v1/videos + polling     (agnes-video-v2.0)
+ *   - generate_image  → POST /v1/images/generations  (agnes-image-2.1-flash)
+ *   - generate_video  → POST /v1/videos + polling     (agnes-video-v2.0)
  *
  * Auth: AGNES_MEDIA_API_KEY (international service, platform.agnes-ai.com),
  * falling back to AGNES_API_KEY. The key is read from the process
@@ -18,263 +18,375 @@
 
 export const name = 'agnes-media';
 export const inject = ['tools'];
+export const exports = [name];
 
 const BASE_URL = 'https://apihub.agnes-ai.com/v1';
-const POLL_ENDPOINT = 'https://apihub.agnes-ai.com/agnesapi';
 const POLL_INTERVAL_MS = 3000;
 const MAX_POLL_COUNT = 60; // ~3 minutes of polling
 
+/* ------------------------------------------------------------------ */
+/*  Helpers                                                           */
+/* ------------------------------------------------------------------ */
+
 function apiKey() {
-  return process.env.AGNES_MEDIA_API_KEY || process.env.AGNES_API_KEY;
+	return process.env.AGNES_MEDIA_API_KEY || process.env.AGNES_API_KEY;
 }
 
 /** AbortSignal-aware sleep used by the video polling loop. */
 function sleep(ms, signal) {
-  return new Promise((resolve, reject) => {
-    if (signal?.aborted) {
-      reject(signal.reason ?? new Error('aborted'));
-      return;
-    }
-    let settled = false;
-    const onAbort = () => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      reject(signal.reason ?? new Error('aborted'));
-    };
-    const timer = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      signal?.removeEventListener('abort', onAbort);
-      resolve();
-    }, ms);
-    signal?.addEventListener('abort', onAbort, { once: true });
-  });
+	return new Promise((resolve, reject) => {
+		if (signal?.aborted) {
+			reject(signal.reason ?? new Error('aborted'));
+			return;
+		}
+		let settled = false;
+		const onAbort = () => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timer);
+			reject(signal.reason ?? new Error('aborted'));
+		};
+		const timer = setTimeout(() => {
+			if (settled) return;
+			settled = true;
+			signal?.removeEventListener('abort', onAbort);
+			resolve();
+		}, ms);
+		signal?.addEventListener('abort', onAbort, { once: true });
+	});
 }
 
 function assertSignal(exec) {
-  if (exec.signal?.aborted) throw exec.signal.reason ?? new Error('aborted');
+	if (exec.signal?.aborted) throw exec.signal.reason ?? new Error('aborted');
 }
 
-/**
- * The plugin apply hook, invoked by the Loader when the `agnes-media` entry
- * mounts. Registers both media tools into the host tool registry.
- * @param ctx - host context providing the `tools` registry.
- */
+/** Clamp n to 1..4 because the image model caps batch size at 4. */
+function clampImages(n) {
+	if (typeof n !== 'number') return 1;
+	return Math.max(1, Math.min(4, Math.round(n)));
+}
+
+/** Parse "WxH" string or "{width,W},{height,H}" into width/height ints. */
+function parseSize(value, fallbackW, fallbackH) {
+	if (!value || typeof value !== 'string') return { width: fallbackW, height: fallbackH };
+	// Try WxH format first
+	const xhMatch = value.match(/^(\d+)\s*[xX×]\s*(\d+)$/);
+	if (xhMatch) return { width: parseInt(xhMatch[1], 10), height: parseInt(xhMatch[2], 10) };
+	// Try structured format {width,W},{height,H}
+	const wMatch = value.match(/\bwidth\s*[:;,]?\s*(\d+)/i);
+	const hMatch = value.match(/\bheight\s*[:;,]?\s*(\d+)/i);
+	return {
+		width: wMatch ? parseInt(wMatch[1], 10) : fallbackW,
+		height: hMatch ? parseInt(hMatch[1], 10) : fallbackH,
+	};
+}
+
+/** Round duration (seconds) to nearest valid num_frames satisfying 8n+1 ≤ 441. */
+function durationToFrames(seconds, fps) {
+	fps = fps || 24;
+	let rawFrames = Math.ceil(seconds * fps);
+	rawFrames = Math.max(81, Math.min(441, rawFrames));
+	// Find closest 8n+1 >= rawFrames
+	const n = Math.ceil((rawFrames - 1) / 8);
+	return Math.min(441, 8 * n + 1);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Plugin apply hook                                                  */
+/* ------------------------------------------------------------------ */
+
 export function apply(ctx) {
-  // ── generate_image ────────────────────────────────────────────────────────
-  ctx.tools.register({
-    name: 'generate_image',
-    description:
-      'Generate image(s) from a text prompt using the agnes-image-2.1-flash model. ' +
-      'Returns public image URL(s). After a successful call, show the image(s) to the user ' +
-      'by including markdown image syntax ![description](url) in your reply.',
-    parameters: {
-      type: 'object',
-      properties: {
-        prompt: {
-          type: 'string',
-          description: 'Detailed text description of the image to generate.',
-        },
-        size: {
-          type: 'string',
-          description: 'Output size like "1024x1024" or "1920x1080". Default 1024x1024.',
-        },
-        n: {
-          type: 'integer',
-          description: 'Number of images to generate. Default 1.',
-        },
-      },
-      required: ['prompt'],
-    },
-    output: {
-      // Raw JSON Schema (this definition is registered directly via
-      // ctx.tools.register, so no DSL `required: true` annotations — the
-      // object root owns the `required` array instead).
-      schema: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          urls: {
-            type: 'array',
-            items: { type: 'string' },
-          },
-          prompt: { type: 'string' },
-        },
-        required: ['urls', 'prompt'],
-      },
-      render: (_args, value) => [
-        {
-          type: 'text',
-          text:
-            `Generated ${value.urls.length} image(s) for prompt: ${value.prompt}\n` +
-            value.urls.map((u) => `![${value.prompt}](${u})`).join('\n') +
-            '\n\nPresent the image(s) above to the user by copying the markdown image line(s) into your reply so they render inline.',
-        },
-      ],
-    },
-    isConcurrencySafe: () => true,
-    async execute(args, exec) {
-      const key = apiKey();
-      if (!key) {
-        throw new Error(
-          'AGNES_MEDIA_API_KEY (or AGNES_API_KEY) is not set — configure the Agnes AI media API key first.',
-        );
-      }
-      const res = await fetch(`${BASE_URL}/images/generations`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${key}`,
-        },
-        body: JSON.stringify({
-          model: 'agnes-image-2.1-flash',
-          prompt: args.prompt,
-          size: args.size ?? '1024x1024',
-          ...(typeof args.n === 'number' ? { n: args.n } : {}),
-          extra_body: { response_format: 'url' },
-        }),
-        signal: exec.signal,
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(
-          `Image generation failed (${res.status}): ${data.error?.message || JSON.stringify(data)}`,
-        );
-      }
-      assertSignal(exec);
-      const urls = [];
-      const items = data.data || data;
-      if (Array.isArray(items)) {
-        for (const item of items) {
-          if (item.url) urls.push(item.url);
-          else if (item.b64_json) urls.push(`data:image/png;base64,${item.b64_json}`);
-        }
-      } else if (items && items.url) {
-        urls.push(items.url);
-      }
-      if (urls.length === 0) {
-        throw new Error(`Unexpected image API response format: ${JSON.stringify(data)}`);
-      }
-      return { urls, prompt: args.prompt };
-    },
-  });
 
-  // ── generate_video ────────────────────────────────────────────────────────
-  ctx.tools.register({
-    name: 'generate_video',
-    description:
-      'Generate a short video from a text prompt using the agnes-video-v2.0 model. ' +
-      'Asynchronous: submits a job then polls until the video URL is ready (up to ~3 minutes).',
-    parameters: {
-      type: 'object',
-      properties: {
-        prompt: {
-          type: 'string',
-          description: 'Detailed text description of the video to generate.',
-        },
-        duration: {
-          type: 'integer',
-          description: 'Video duration in seconds. Default 4.',
-        },
-        size: {
-          type: 'string',
-          description: 'Video resolution like "1280x720". Default 1280x720.',
-        },
-      },
-      required: ['prompt'],
-    },
-    output: {
-      schema: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          url: { type: 'string' },
-          prompt: { type: 'string' },
-        },
-        required: ['url', 'prompt'],
-      },
-      render: (_args, value) => [
-        {
-          type: 'text',
-          text:
-            `Video generated for prompt: ${value.prompt}\n` +
-            `Watch/download: ${value.url}\n\n` +
-            'Present this video to the user with the direct link above.',
-        },
-      ],
-    },
-    // Polling can take ~3 minutes; declare a budget above the worst case so
-    // the timeout-policy wrapper (when active) does not cut a running poll.
-    timeoutMs: MAX_POLL_COUNT * POLL_INTERVAL_MS + 30000,
-    async execute(args, exec) {
-      const key = apiKey();
-      if (!key) {
-        throw new Error(
-          'AGNES_MEDIA_API_KEY (or AGNES_API_KEY) is not set — configure the Agnes AI media API key first.',
-        );
-      }
-      const submitRes = await fetch(`${BASE_URL}/videos`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${key}`,
-        },
-        body: JSON.stringify({
-          model: 'agnes-video-v2.0',
-          prompt: args.prompt,
-          duration: args.duration ?? 4,
-          size: args.size ?? '1280x720',
-        }),
-        signal: exec.signal,
-      });
-      const submitData = await submitRes.json();
-      if (!submitRes.ok) {
-        throw new Error(
-          `Video submission failed (${submitRes.status}): ${submitData.error?.message || JSON.stringify(submitData)}`,
-        );
-      }
-      const videoId =
-        (submitData.data && submitData.data.video_id) ||
-        submitData.data?.id ||
-        submitData.video_id ||
-        submitData.id;
-      if (!videoId) {
-        throw new Error(`Unexpected video submission response: ${JSON.stringify(submitData)}`);
-      }
+	/* ── generate_image ──────────────────────────────────────── */
+	ctx.tools.register({
+		name: 'generate_image',
+		description:
+			'Generate image(s) from a text prompt using the agnes-image-2.1-flash model.\n\n' +
+			'Returns public image URL(s). After a successful call, show the image(s) to the user\nby including markdown image syntax `![description](url)` in your reply.',
+		parameters: {
+			type: 'object',
+			properties: {
+				prompt: {
+					type: 'string',
+					description:
+						'Detailed text description of the image to generate. Include subject, scene, composition, style, lighting, camera/framing, color palette, mood, and quality cues for best results.',
+				},
+				size: {
+					type: 'string',
+					description:
+						'Output dimensions. Accept "WxH" (e.g. "1920x1080") or structured "{width,1920},{height,1080}". Default 1024x1024.',
+				},
+				n: {
+					type: 'integer',
+					description: 'Number of images to generate. Default 1, max 4.',
+				},
+			},
+			required: ['prompt'],
+		},
+		output: {
+			schema: {
+				type: 'object',
+				additionalProperties: false,
+				properties: {
+					urls: { type: 'array', items: { type: 'string' } },
+					prompt: { type: 'string' },
+				},
+				required: ['urls', 'prompt'],
+			},
+			render: (_args, value) => [
+				{
+					type: 'text',
+					text:
+						`Generated ${value.urls.length} image(s) for prompt: ${value.prompt}\n` +
+						value.urls.map((u) => `![${value.prompt}](${u})`).join('\n') +
+						'\n\nPresent the image(s) above to the user by copying the markdown image line(s) into your reply so they render inline.',
+				},
+			],
+		},
+		isConcurrencySafe: () => true,
+		async execute(args, exec) {
+			const key = apiKey();
+			if (!key) {
+				throw new Error(
+					'AGNES_MEDIA_API_KEY (or AGNES_API_KEY) is not set — configure the Agnes AI media API key first.',
+				);
+			}
 
-      for (let i = 0; i < MAX_POLL_COUNT; i++) {
-        await sleep(POLL_INTERVAL_MS, exec.signal);
-        assertSignal(exec);
-        const statusRes = await fetch(
-          `${POLL_ENDPOINT}?video_id=${encodeURIComponent(videoId)}`,
-          { headers: { Authorization: `Bearer ${key}` }, signal: exec.signal },
-        );
-        const statusData = await statusRes.json();
-        if (!statusRes.ok) {
-          throw new Error(
-            `Video status check failed (${statusRes.status}): ${JSON.stringify(statusData)}`,
-          );
-        }
-        const status = (statusData.data && statusData.data.status) || statusData.status;
-        if (status === 'completed' || status === 'succeeded') {
-          const url =
-            (statusData.data && statusData.data.video_url) ||
-            statusData.data?.url ||
-            statusData.video_url ||
-            statusData.url;
-          if (!url) throw new Error(`Video completed but no URL: ${JSON.stringify(statusData)}`);
-          return { url, prompt: args.prompt };
-        }
-        if (status === 'failed' || status === 'error') {
-          const msg =
-            (statusData.data && statusData.data.error) || statusData.error || 'Unknown error';
-          throw new Error(`Video generation failed: ${msg}`);
-        }
-      }
-      throw new Error(
-        `Video generation timed out after ${(MAX_POLL_COUNT * POLL_INTERVAL_MS) / 1000}s (video_id: ${videoId})`,
-      );
-    },
-  });
+			const { width, height } = parseSize(args.size, 1024, 1024);
+			const n = clampImages(args.n);
+			const sizeStr = `${width}x${height}`;
+
+			const body = {
+				model: 'agnes-image-2.1-flash',
+				prompt: args.prompt,
+				size: sizeStr,
+			};
+			if (n > 1) body.n = n;
+
+			const res = await fetch(`${BASE_URL}/images/generations`, {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+					Authorization: `Bearer ${key}`,
+				},
+				body: JSON.stringify(body),
+				signal: exec.signal,
+			});
+
+			const data = await res.json();
+			if (!res.ok) {
+				throw new Error(
+					`Image generation failed (${res.status}): ${data.error?.message || JSON.stringify(data)}`,
+				);
+			}
+
+			assertSignal(exec);
+
+			// Extract URLs — works with OpenAI-compatible wrapper format or bare array
+			const urls = [];
+			const items = Array.isArray(data.data) ? data.data : Array.isArray(data) ? data : [data];
+			for (const item of items) {
+				if (item?.url) urls.push(item.url);
+				else if (item?.b64_json) urls.push(`data:image/png;base64,${item.b64_json}`);
+			}
+			if (urls.length === 0) {
+				throw new Error(`Unexpected image API response format: ${JSON.stringify(data)}`);
+			}
+
+			return { urls, prompt: args.prompt };
+		},
+	});
+
+	/* ── generate_video ──────────────────────────────────────── */
+	ctx.tools.register({
+		name: 'generate_video',
+		description:
+			'Generate a short video from a text prompt using the agnes-video-v2.0 model.\n\n' +
+			'Asynchronous: submits a job then polls until the video URL is ready (up to ~3 min).\n\n' +
+			'**Frame constraints** — `num_frames` must equal **8 × n + 1** and be ≤ 441. Valid values:\n81, 121, 161, 201, 241, 281, 321, 361, 401, 441.\nIf you pass `duration` instead, it will be converted automatically at 24 fps.\n\n' +
+			'**Resolution** — use the `size` parameter as "W×H" string, e.g. "1280x720". Default 1280x720.\n' +
+			'Alternatively specify `{width,1280},{height,720}`.',
+		parameters: {
+			type: 'object',
+			properties: {
+				prompt: {
+					type: 'string',
+					description:
+						'Detailed text description of the video to generate. Include subject, action, scene, camera movement/pans/zooms, lighting, and style.',
+				},
+				duration: {
+					type: 'integer',
+					description:
+						'Target video duration in seconds. Will be rounded to a valid frame count at 24 fps. Default 5 (~121 frames, 5 s).',
+				},
+				size: {
+					type: 'string',
+					description:
+						'Video resolution like "1280x720". Default 1280x720. Also accepts "{width,W},{height,H}".',
+				},
+				frame_rate: {
+					type: 'integer',
+					description:
+						'Frames per second. Supported 1–60. Default 24.',
+				},
+				num_frames: {
+					type: 'integer',
+					description:
+						'Explicit frame count override. Must satisfy 8n + 1 and be ≤ 441. If provided, ignores `duration`. Valid: 81, 121, 161, 201, 241, 281, 321, 361, 401, 441.',
+				},
+				negative_prompt: {
+					type: 'string',
+					description:
+						'Description of things to avoid in the generated video. E.g. "blurry, shaky camera, low quality".',
+				},
+				seed: {
+					type: 'integer',
+					description:
+						'Random seed for reproducible generation. Omit for randomness.',
+				},
+			},
+			required: ['prompt'],
+		},
+		output: {
+			schema: {
+				type: 'object',
+				additionalProperties: false,
+				properties: {
+					url: { type: 'string' },
+					prompt: { type: 'string' },
+				},
+				required: ['url', 'prompt'],
+			},
+			render: (_args, value) => [
+				{
+					type: 'text',
+					text:
+						`Video generated for prompt: ${value.prompt}\n` +
+						`Watch/download: ${value.url}\n\n` +
+						'Present this video to the user with the direct link above.',
+				},
+			],
+		},
+		isConcurrencySafe: () => true,
+		timeoutMs: MAX_POLL_COUNT * POLL_INTERVAL_MS + 30_000,
+		async execute(args, exec) {
+			const key = apiKey();
+			if (!key) {
+				throw new Error(
+					'AGNES_MEDIA_API_KEY (or AGNES_API_KEY) is not set — configure the Agnes AI media API key first.',
+				);
+			}
+
+			/* Resolve dimensions */
+			const { width, height } = parseSize(args.size, 1280, 720);
+			const frameRate =
+				args.frame_rate != null
+					? Math.max(1, Math.min(60, Number(args.frame_rate)))
+					: 24;
+
+			/* Resolve frame count: explicit num_frames wins, otherwise convert duration */
+			let numFrames;
+			if (args.num_frames != null) {
+				numFrames = Math.round(Number(args.num_frames));
+				if (numFrames <= 0 || numFrames > 441 || (numFrames - 1) % 8 !== 0) {
+					throw new Error(
+						`Invalid num_frames: ${numFrames}. Must satisfy 8n + 1 and be ≤ 441. Valid values: 81, 121, 161, 201, 241, 281, 321, 361, 401, 441.`,
+					);
+				}
+			} else {
+				const secs = args.duration != null ? Math.max(1, Number(args.duration)) : 5;
+				numFrames = durationToFrames(secs, frameRate);
+			}
+
+			/* Build request body matching Agnes Video V2.0 spec */
+			const requestBody = {
+				model: 'agnes-video-v2.0',
+				prompt: args.prompt,
+				width,
+				height,
+				num_frames: numFrames,
+				frame_rate: frameRate,
+			};
+
+			if (args.negative_prompt && typeof args.negative_prompt === 'string') {
+				requestBody.negative_prompt = args.negative_prompt.trim();
+			}
+			if (args.seed != null && typeof args.seed === 'number') {
+				requestBody.seed = Math.floor(args.seed);
+			}
+
+			/* Step 1 — submit job via POST /v1/videos */
+			const submitRes = await fetch(`${BASE_URL}/videos`, {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+					Authorization: `Bearer ${key}`,
+				},
+				body: JSON.stringify(requestBody),
+				signal: exec.signal,
+			});
+
+			const submitData = await submitRes.json();
+			if (!submitRes.ok) {
+				throw new Error(
+					`Video submission failed (${submitRes.status}): ${submitData.error?.message || JSON.stringify(submitData)}`,
+				);
+			}
+
+			/* Extract task_id — API returns it at top level */
+			const taskId =
+				submitData.task_id ??
+				submitData.id ??
+				submitData.data?.id ??
+				submitData.data?.task_id;
+			if (!taskId) {
+				throw new Error(`Unexpected video submission response: ${JSON.stringify(submitData)}`);
+			}
+
+			/* Step 2 — poll GET /v1/videos/{task_id} until completed/failed/timed-out */
+			for (let i = 0; i < MAX_POLL_COUNT; i++) {
+				await sleep(POLL_INTERVAL_MS, exec.signal);
+				assertSignal(exec);
+
+				const statusRes = await fetch(`${BASE_URL}/videos/${encodeURIComponent(taskId)}`, {
+					headers: { Authorization: `Bearer ${key}` },
+					signal: exec.signal,
+				});
+
+				const statusData = await statusRes.json();
+				if (!statusRes.ok) {
+					throw new Error(
+						`Video status check failed (${statusRes.status}): ${JSON.stringify(statusData)}`,
+					);
+				}
+
+				const status = statusData.status ?? statusData.data?.status;
+
+				if (status === 'completed' || status === 'succeeded') {
+					const url =
+						statusData.remixed_from_video_id ??
+						statusData.video_url ??
+						statusData.url ??
+						statusData.data?.video_url ??
+						statusData.data?.url;
+					if (!url) {
+						throw new Error(`Video completed but no URL found: ${JSON.stringify(statusData)}`);
+					}
+					return { url, prompt: args.prompt };
+				}
+
+				if (status === 'failed' || status === 'error') {
+					const msg =
+						statusData.error ??
+						statusData.data?.error ??
+						'Unknown error';
+					throw new Error(`Video generation failed: ${msg}`);
+				}
+			}
+
+			throw new Error(
+				`Video generation timed out after ${(MAX_POLL_COUNT * POLL_INTERVAL_MS) / 1000}s (task_id: ${taskId})`,
+			);
+		},
+	});
 }

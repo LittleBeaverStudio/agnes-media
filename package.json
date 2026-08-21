@@ -1,6 +1,6 @@
 {
   "name": "agnes-media",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Registers generate_image and generate_video tools for Agnes AI media models (agnes-image-2.1-flash, agnes-video-v2.0) in DeepSeek Harness.",
   "type": "module",
   "main": "index.js",
