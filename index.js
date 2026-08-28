@@ -5,7 +5,7 @@
  * (the standard chat-completions route rejects these models with a 400):
  *
  *   - generate_image  → POST /v1/images/generations  (agnes-image-2.1-flash)
- *   - generate_video  → POST /v1/videos + polling     (agnes-video-v2.0)
+ *   - generate_video  → POST /v1/videos + polling     (agnes-video-2.5-flash)
  *
  * Auth: AGNES_MEDIA_API_KEY (or AGNES_API_KEY fallback).
  * The key is read from the process environment at call time — never hardcode it.
@@ -112,14 +112,27 @@ function parseSize(value, fallbackW, fallbackH) {
 	};
 }
 
-/** Round duration (seconds) to nearest valid num_frames satisfying 8n+1 ≤ 441. */
-function durationToFrames(seconds, fps) {
-	fps = fps || 24;
-	let rawFrames = Math.ceil(seconds * fps);
-	rawFrames = Math.max(81, Math.min(441, rawFrames));
-	// Find closest 8n+1 >= rawFrames
-	const n = Math.ceil((rawFrames - 1) / 8);
-	return Math.min(441, 8 * n + 1);
+/** Map aspect ratio string to width/height and size string. */
+const ASPECT_RATIOS = {
+	'16:9': { w: 1280, h: 720, size: '720P' },
+	'9:16': { w: 720, h: 1280, size: '720P' },
+	'1:1': { w: 720, h: 720, size: '720P' },
+	'4:3': { w: 960, h: 720, size: '720P' },
+	'3:4': { w: 720, h: 960, size: '720P' },
+	'21:9': { w: 1680, h: 720, size: '720P' },
+};
+
+function parseAspectRatio(value) {
+	if (!value || typeof value !== 'string') return '16:9';
+	const ratio = value.trim().replace(/\s/g, '');
+	return ASPECT_RATIOS[ratio] ? ratio : '16:9';
+}
+
+/** Validate duration is between 4 and 12 seconds. */
+function validateDuration(seconds) {
+	const n = Number(seconds);
+	if (isNaN(n)) return 5;
+	return Math.max(4, Math.min(12, n));
 }
 
 /** Describe current endpoint configuration (for error messages). */
@@ -247,11 +260,11 @@ export function apply(ctx) {
 	ctx.tools.register({
 		name: 'generate_video',
 		description:
-			'Generate a short video from a text prompt using the agnes-video-v2.0 model.\n\n' +
+			'Generate a short video from a text prompt using the agnes-video-2.5-flash model.\n\n' +
 			'Asynchronous: submits a job then polls until the video URL is ready (up to ~3 min).\n\n' +
-			'**Frame constraints** — `num_frames` must equal **8 × n + 1** and be ≤ 441. Valid values:\n81, 121, 161, 201, 241, 281, 321, 361, 401, 441.\nIf you pass `duration` instead, it will be converted automatically at 24 fps.\n\n' +
-			'**Resolution** — use the `size` parameter as "W×H" string, e.g. "1280x720". Default 1280x720.\n' +
-			'Alternatively specify `{width,1280},{height,720}`.',
+			'**Duration** — 4 to 12 seconds. Default 5.\n\n' +
+			'**Aspect ratios** — "16:9" (default), "9:16", "1:1", "4:3", "3:4", "21:9".\n' +
+			'**Resolution** — Fixed at 720p for all aspect ratios.',
 		parameters: {
 			type: 'object',
 			properties: {
@@ -262,23 +275,17 @@ export function apply(ctx) {
 				},
 				duration: {
 					type: 'integer',
-					description:
-						'Target video duration in seconds. Will be rounded to a valid frame count at 24 fps. Default 5 (~121 frames, 5 s).',
+					description: 'Target video duration in seconds. Range 4-12. Default 5.',
 				},
 				size: {
 					type: 'string',
 					description:
-						'Video resolution like "1280x720". Default 1280x720. Also accepts "{width,W},{height,H}".',
+						'Resolution string (optional, 720p is default). Also accepts "WxH" or structured format.',
 				},
-				frame_rate: {
-					type: 'integer',
+				aspect_ratio: {
+					type: 'string',
 					description:
-						'Frames per second. Supported 1–60. Default 24.',
-				},
-				num_frames: {
-					type: 'integer',
-					description:
-						'Explicit frame count override. Must satisfy 8n + 1 and be ≤ 441. If provided, ignores `duration`. Valid: 81, 121, 161, 201, 241, 281, 321, 361, 401, 441.',
+						'Aspect ratio: "16:9" (default), "9:16", "1:1", "4:3", "3:4", "21:9".',
 				},
 				negative_prompt: {
 					type: 'string',
@@ -325,35 +332,25 @@ export function apply(ctx) {
 				);
 			}
 
-			/* Resolve dimensions */
-			const { width, height } = parseSize(args.size, 1280, 720);
-			const frameRate =
-				args.frame_rate != null
-					? Math.max(1, Math.min(60, Number(args.frame_rate)))
-					: 24;
+			/* Resolve aspect ratio and dimensions */
+			const ratioKey = parseAspectRatio(args.aspect_ratio);
+			const ratioConfig = ASPECT_RATIOS[ratioKey];
+			const width = ratioConfig.w;
+			const height = ratioConfig.h;
+			const size = ratioConfig.size;
 
-			/* Resolve frame count: explicit num_frames wins, otherwise convert duration */
-			let numFrames;
-			if (args.num_frames != null) {
-				numFrames = Math.round(Number(args.num_frames));
-				if (numFrames <= 0 || numFrames > 441 || (numFrames - 1) % 8 !== 0) {
-					throw new Error(
-						`Invalid num_frames: ${numFrames}. Must satisfy 8n + 1 and be ≤ 441. Valid values: 81, 121, 161, 201, 241, 281, 321, 361, 401, 441.`,
-					);
-				}
-			} else {
-				const secs = args.duration != null ? Math.max(1, Number(args.duration)) : 5;
-				numFrames = durationToFrames(secs, frameRate);
-			}
+			/* Resolve duration */
+			const duration = validateDuration(args.duration);
 
-			/* Build request body matching Agnes Video V2.0 spec */
+			/* Build request body matching Agnes Video 2.5 Flash spec */
 			const requestBody = {
-				model: 'agnes-video-v2.0',
+				model: 'agnes-video-2.5-flash',
+				mode: 'text',
 				prompt: args.prompt,
-				width,
-				height,
-				num_frames: numFrames,
-				frame_rate: frameRate,
+				size: size,
+				aspect_ratio: ratioKey,
+				seconds: String(duration),
+				n: 1,
 			};
 
 			if (args.negative_prompt && typeof args.negative_prompt === 'string') {
@@ -387,25 +384,28 @@ export function apply(ctx) {
 				throw new Error(`Video submission failed (${submitRes.status}): ${msg}`);
 			}
 
-			/* Extract task_id — API returns it at top level */
-			const taskId =
-				submitData.task_id ??
+			/* Extract video_id — API returns it at top level */
+			const videoId =
+				submitData.video_id ??
 				submitData.id ??
 				submitData.data?.id ??
-				submitData.data?.task_id;
-			if (!taskId) {
+				submitData.data?.video_id;
+			if (!videoId) {
 				throw new Error(`Unexpected video submission response: ${JSON.stringify(submitData)}`);
 			}
 
-			/* Step 2 — poll GET /v1/videos/{task_id} until completed/failed/timed-out */
+			/* Step 2 — poll GET /agnesapi?video_id=... until completed/failed/timed-out */
 			for (let i = 0; i < MAX_POLL_COUNT; i++) {
 				await sleep(POLL_INTERVAL_MS, exec.signal);
 				assertSignal(exec);
 
-				const statusRes = await fetch(`${getBaseURL()}/videos/${encodeURIComponent(taskId)}`, {
-					headers: { Authorization: `Bearer ${key}` },
-					signal: exec.signal,
-				});
+				const statusRes = await fetch(
+					`${getBaseURL().replace('/v1', '')}/agnesapi?video_id=${encodeURIComponent(videoId)}&model_name=agnes-video-2.5-flash`,
+					{
+						headers: { Authorization: `Bearer ${key}` },
+						signal: exec.signal,
+					},
+				);
 
 				const statusData = await statusRes.json();
 				if (!statusRes.ok) {
@@ -418,11 +418,11 @@ export function apply(ctx) {
 
 				if (status === 'completed' || status === 'succeeded') {
 					const url =
-						statusData.remixed_from_video_id ??
-						statusData.video_url ??
+						statusData.metadata?.url ??
 						statusData.url ??
-						statusData.data?.video_url ??
-						statusData.data?.url;
+						statusData.video_url ??
+						statusData.data?.url ??
+						statusData.data?.video_url;
 					if (!url) {
 						throw new Error(`Video completed but no URL found: ${JSON.stringify(statusData)}`);
 					}
@@ -439,7 +439,7 @@ export function apply(ctx) {
 			}
 
 			throw new Error(
-				`Video generation timed out after ${(MAX_POLL_COUNT * POLL_INTERVAL_MS) / 1000}s (task_id: ${taskId})`,
+				`Video generation timed out after ${(MAX_POLL_COUNT * POLL_INTERVAL_MS) / 1000}s (video_id: ${videoId})`,
 			);
 		},
 	});
