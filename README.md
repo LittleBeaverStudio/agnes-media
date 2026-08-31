@@ -5,7 +5,7 @@ two host tools for the Agnes AI media models, so the agent can generate images
 and videos during a conversation.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![DeepSeek Harness](https://img.shields.io/badge/dsh-plugin-v1.4.0-blue)](https://github.com/deepseek-ai/deepseek-harness)
+[![DeepSeek Harness](https://img.shields.io/badge/dsh-plugin-v1.5.0-blue)](https://github.com/deepseek-ai/deepseek-harness)
 [![Agnes AI](https://img.shields.io/badge/agnes-api-free-green)](https://agnes-ai.cn)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D22-brightgreen)](https://nodejs.org)
 [![npm](https://img.shields.io/badge/npm-v10%2B-red)](https://npmjs.com)
@@ -15,10 +15,10 @@ and videos during a conversation.
 ## 🌟 功能特性
 
 - **文生图**：使用 `agnes-image-2.1-flash` 模型生成高质量图片
-- **文生视频**：使用 `agnes-video-2.5-flash` 模型生成短视频（4-12秒）
+- **文生视频**：使用 `agnes-video-v2.0` 模型生成短视频
 - **免费无限**：Agnes AI 提供永久免费的 API 调用
 - **双端点支持**：自动适配中国大陆和国际节点
-- **零依赖**：仅使用 Node.js 内置模块，无需额外安装
+- **凭证集成**：支持 DSH credentials 系统
 
 ---
 
@@ -57,7 +57,7 @@ and videos during a conversation.
 
 ```bash
 # 使用 curl 直接测试，排除插件配置问题
-curl -s https://api.agnes-ai.cn/v1/models \
+curl -s https://apihub.agnes-ai.cn/v1/models \
   -H "Authorization: Bearer YOUR_KEY_HERE" | head -c 500
 ```
 
@@ -77,13 +77,14 @@ curl -s https://api.agnes-ai.cn/v1/models \
 
 ### 选择合适的端点
 
-默认情况下，插件连接**国际节点**（`api.agnes-ai.com`）。
+默认情况下，插件连接**国际节点**（`apihub.agnes-ai.com`）。
 
 | 如果你… | 这样做 |
 |---------|--------|
-| 在中国大陆 | 启动 DSH 前设置 `AGNES_MEDIA_DOMAIN=cn` 使用国内节点（`api.agnes-ai.cn`）— 速度更快，无需代理 |
+| 在中国大陆 | 启动 DSH 前设置 `AGNES_MEDIA_DOMAIN=cn` 使用国内节点（`apihub.agnes-ai.cn`）— 速度更快，无需代理 |
 | 需要自定义端点 | 设置 `AGNES_MEDIA_BASE_URL=https://your-custom-endpoint/v1` |
 | 想保持国际默认 | 无需额外配置；只需设置你的 API Key |
+| 使用 DSH credentials | 在 DSH 凭证管理中添加 `AGNES_MEDIA_API_KEY` |
 
 #### Windows PowerShell
 ```powershell
@@ -105,6 +106,7 @@ dsh web
 
 - DeepSeek Harness `0.1.0-rc.7` 或更高版本（使用 `cordis.patch.yml` bundle 格式）
 - Agnes AI API Key（免费），通过 `AGNES_MEDIA_API_KEY` 或 `AGNES_API_KEY` 暴露
+- 可选：DSH credentials 系统（支持图形界面配置 API Key）
 
 ## 安装
 
@@ -131,32 +133,30 @@ dsh plugin --profile web add github:LittleBeaverStudio/agnes-media
 
 ### `generate_video`
 
-使用 `agnes-video-2.5-flash` 模型从文本提示生成短视频（**新版**）。
+使用 `agnes-video-v2.0` 模型从文本提示生成短视频。
 
 异步操作：提交任务后，每 3 秒轮询状态端点，直到视频生成完成（最多约 3 分钟）。
 
 **参数：**
 - `prompt`（必需）：视频的详细文本描述。包括主体、动作、场景、镜头运动、光线和风格。
-- `duration`（可选）：目标时长（秒）。范围：4-12 秒，默认：5 秒。
-- `size`（可选）：输出尺寸，格式为 `"WxH"`（如 `"1280x720"`）或 `"{width,1280},{height,720}"`。默认：`1280x720`。
-- `aspect_ratio`（可选）：宽高比，支持 `16:9`（默认）、`9:16`、`1:1`、`4:3`、`3:4`、`21:9`。
+- `duration`（可选）：目标时长（秒）。自动转换为有效的帧数，24 fps。默认：`5`。
+- `num_frames`（可选）：显式帧数覆盖。必须满足 `8n + 1` 且 ≤ 441。有效值：81, 121, 161, 201, 241, 281, 321, 361, 401, 441。如果提供，将忽略 `duration`。
+- `size`（可选）：分辨率，格式为 `"WxH"`（如 `"1280x720"`）或 `"{width,W},{height,H}"`。默认：`1280x720`。
+- `frame_rate`（可选）：帧率。范围：1–60。默认：`24`。
 - `negative_prompt`（可选）：要避免的内容（如 `"模糊、抖动镜头"`）。
 - `seed`（可选）：随机种子，用于可重复生成。
 
 **返回值：** 直接视频 URL。
 
-## 宽高比说明
+## 帧数验证
 
-Agnes Video 2.5 Flash 支持以下宽高比：
+Agnes Video V2.0 要求 `num_frames` 必须满足集合 `{8n + 1 | n ≥ 1, 8n+1 ≤ 441}`：
 
-| 宽高比 | 分辨率 | 适用场景 |
-|--------|--------|----------|
-| 16:9 | 1280×720 | 横向视频（默认） |
-| 9:16 | 720×1280 | 竖屏短视频 |
-| 1:1 | 720×720 | 正方形 |
-| 4:3 | 960×720 | 传统比例 |
-| 3:4 | 720×960 | 竖版海报 |
-| 21:9 | 1680×720 | 超宽 cinematic |
+```
+81, 121, 161, 201, 241, 281, 321, 361, 401, 441
+```
+
+如果你传递 `duration`，插件会自动计算最近的帧数。如果直接传递 `num_frames`，会在提交前验证 — 无效值会立即被拒绝并显示清晰的错误信息。
 
 ## 环境变量参考
 
@@ -166,6 +166,17 @@ Agnes Video 2.5 Flash 支持以下宽高比：
 | `AGNES_API_KEY` | 备用 API Key | — |
 | `AGNES_MEDIA_DOMAIN` | 节点选择：`cn` 为国内，其他为国际 | `com` |
 | `AGNES_MEDIA_BASE_URL` | 完整自定义 Base URL（覆盖域名）。必须以 `/v1` 结尾。 | _(自动从域名生成)_ |
+
+## DSH Credentials 支持
+
+插件支持从 DSH 凭证系统读取 API Key，无需设置环境变量：
+
+1. 在 DSH Web UI 中打开设置
+2. 进入 **凭证管理**（Credentials）
+3. 添加新凭证：`AGNES_MEDIA_API_KEY` = `sk-xxxxxxxx...`
+4. 保存后重启 DSH
+
+凭证优先级：环境变量 > DSH credentials > 错误提示
 
 ## 结果如何在对话中显示
 
@@ -177,6 +188,7 @@ Agnes Video 2.5 Flash 支持以下宽高比：
 - 永远不要提交 API Key。此仓库故意不包含任何密钥；`.gitignore` 排除了本地配置和环境文件。
 - Key 仅以 `Bearer` header 形式离开你的机器，发送到 Agnes AI API。
 - 插件在调用时从进程环境读取 Key；永远不会持久化或记录。
+- 如果使用 DSH credentials，Key 会加密存储在本地凭证数据库中。
 
 ## 许可证
 
@@ -188,7 +200,8 @@ Agnes Video 2.5 Flash 支持以下宽高比：
 
 | 版本 | 日期 | 更新内容 |
 |------|------|---------|
-| v1.4.0 | 2026-08-28 | 升级视频模型至 agnes-video-2.5-flash，支持宽高比参数 |
+| v1.5.0 | 2026-08-31 | 修正端点 URL 到 apihub，支持 DSH credentials 系统 |
+| v1.4.0 | 2026-08-28 | 升级视频模型至 agnes-video-2.5-flash（已回退） |
 | v1.2.0 | 2026-08-21 | 修正端点 URL：`apihub.agnes-ai.cn` → `api.agnes-ai.cn` |
 | v1.1.1 | 2026-08-21 | 添加 API Key 获取指南和 401 错误排查表 |
 | v1.1.0 | 2026-08-21 | 支持国内外双端点，通过 `AGNES_MEDIA_DOMAIN` 切换 |
