@@ -5,7 +5,7 @@ two host tools for the Agnes AI media models, so the agent can generate images
 and videos during a conversation.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![DeepSeek Harness](https://img.shields.io/badge/dsh-plugin-v1.5.0-blue)](https://github.com/deepseek-ai/deepseek-harness)
+[![DeepSeek Harness](https://img.shields.io/badge/dsh-plugin-v1.6.0-blue)](https://github.com/deepseek-ai/deepseek-harness)
 [![Agnes AI](https://img.shields.io/badge/agnes-api-free-green)](https://agnes-ai.cn)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D22-brightgreen)](https://nodejs.org)
 [![npm](https://img.shields.io/badge/npm-v10%2B-red)](https://npmjs.com)
@@ -15,10 +15,12 @@ and videos during a conversation.
 ## 🌟 功能特性
 
 - **文生图**：使用 `agnes-image-2.1-flash` 模型生成高质量图片
-- **文生视频**：使用 `agnes-video-v2.0` 模型生成短视频
-- **免费无限**：Agnes AI 提供永久免费的 API 调用
-- **双端点支持**：自动适配中国大陆和国际节点
-- **凭证集成**：支持 DSH credentials 系统
+- **文生视频**：使用 `agnes-video-2.5-flash` 模型生成 4-12 秒短视频（默认 5 秒）
+- **图生视频**：传入 `reference_image_url` 即可使用参考图（reference 模式）
+- **免费无限**：Agnes AI 提供免费 API 调用
+- **国内直连**：实测 `api.agnes-ai.com`/`.cn` 旧节点均 404/401，默认统一走 `apihub.agnes-ai.cn`
+- **凭证集成**：支持环境变量或 DSH credentials 系统
+- **零依赖**：仅使用 Node.js 内置模块，无需额外安装
 
 ---
 
@@ -77,26 +79,29 @@ curl -s https://apihub.agnes-ai.cn/v1/models \
 
 ### 选择合适的端点
 
-默认情况下，插件连接**国际节点**（`apihub.agnes-ai.com`）。
+**重要（2026-09 实测）**：旧的 `api.agnes-ai.com` / `api.agnes-ai.cn` 节点已全部 404/401，
+当前只有 `apihub.agnes-ai.cn` 可用。因此插件默认统一指向 `apihub.agnes-ai.cn`，
+`AGNES_MEDIA_DOMAIN` 已不再影响端点选择（保留仅为向后兼容）。
 
 | 如果你… | 这样做 |
 |---------|--------|
-| 在中国大陆 | 启动 DSH 前设置 `AGNES_MEDIA_DOMAIN=cn` 使用国内节点（`apihub.agnes-ai.cn`）— 速度更快，无需代理 |
-| 需要自定义端点 | 设置 `AGNES_MEDIA_BASE_URL=https://your-custom-endpoint/v1` |
-| 想保持国际默认 | 无需额外配置；只需设置你的 API Key |
+| 在中国大陆 | 无需任何配置，默认即 `apihub.agnes-ai.cn` |
+| 在海外 / 需要自定义端点 | 设置 `AGNES_MEDIA_BASE_URL=https://apihub.agnes-ai.com`（插件会自动追加 `/v1`） |
 | 使用 DSH credentials | 在 DSH 凭证管理中添加 `AGNES_MEDIA_API_KEY` |
 
 #### Windows PowerShell
 ```powershell
 $env:AGNES_API_KEY = "sk-xxxxxxxx..."
-$env:AGNES_MEDIA_DOMAIN = "cn"   # 中国大陆用户添加这一行
+# 国内无需额外配置；海外用户取消下一行注释
+# $env:AGNES_MEDIA_BASE_URL = "https://apihub.agnes-ai.com"
 dsh web
 ```
 
 #### macOS / Linux
 ```bash
 export AGNES_API_KEY="sk-xxxxxxxx..."
-export AGNES_MEDIA_DOMAIN=cn     # 中国大陆用户取消注释这一行
+# 国内无需额外配置；海外用户取消下一行注释
+# export AGNES_MEDIA_BASE_URL=https://apihub.agnes-ai.com
 dsh web
 ```
 
@@ -133,39 +138,42 @@ dsh plugin --profile web add github:LittleBeaverStudio/agnes-media
 
 ### `generate_video`
 
-使用 `agnes-video-v2.0` 模型从文本提示生成短视频。
+使用 `agnes-video-2.5-flash` 模型从文本提示或参考图生成短视频。
 
-异步操作：提交任务后，每 3 秒轮询状态端点，直到视频生成完成（最多约 3 分钟）。
+异步操作：提交任务后，每 3 秒轮询一次 `/agnesapi` 状态端点，直到视频生成完成（最多约 6 分钟；12 秒任务实测推理约 2 分钟）。
 
 **参数：**
 - `prompt`（必需）：视频的详细文本描述。包括主体、动作、场景、镜头运动、光线和风格。
-- `duration`（可选）：目标时长（秒）。自动转换为有效的帧数，24 fps。默认：`5`。
-- `num_frames`（可选）：显式帧数覆盖。必须满足 `8n + 1` 且 ≤ 441。有效值：81, 121, 161, 201, 241, 281, 321, 361, 401, 441。如果提供，将忽略 `duration`。
-- `size`（可选）：分辨率，格式为 `"WxH"`（如 `"1280x720"`）或 `"{width,W},{height,H}"`。默认：`1280x720`。
-- `frame_rate`（可选）：帧率。范围：1–60。默认：`24`。
-- `negative_prompt`（可选）：要避免的内容（如 `"模糊、抖动镜头"`）。
+- `duration`（可选）：目标时长（秒）。范围：4-12，默认：`5`。
+- `aspect_ratio`（可选）：宽高比，`"16:9"`（默认）、`"9:16"`、`"1:1"`、`"4:3"`、`"3:4"`、`"21:9"`。
+- `size`（可选）：分辨率档位。Flash 模型固定 720P，插件会自动传 `"720P"`。
+- `reference_image_url`（可选）：公网可访问的 HTTPS 图片 URL。传入即走 `mode=reference` 图生视频，并放入 `images[]`；不传走 `mode=text`。注意：Agnes 不接受本地文件路径。
 - `seed`（可选）：随机种子，用于可重复生成。
+- `negative_prompt`（可选，保留）：参数定义保留以避免调用报错，但 Agnes 2.5 Flash 接口会 400 拒收该字段，插件不会实际发送。
 
-**返回值：** 直接视频 URL。
+**返回值：** 直接视频 URL（按 `metadata.url → url → video_url → data.url` 依次回退提取）。
 
-## 帧数验证
+## 宽高比说明
 
-Agnes Video V2.0 要求 `num_frames` 必须满足集合 `{8n + 1 | n ≥ 1, 8n+1 ≤ 441}`：
+Agnes Video 2.5 Flash 固定 720P，支持以下宽高比：
 
-```
-81, 121, 161, 201, 241, 281, 321, 361, 401, 441
-```
-
-如果你传递 `duration`，插件会自动计算最近的帧数。如果直接传递 `num_frames`，会在提交前验证 — 无效值会立即被拒绝并显示清晰的错误信息。
+| 宽高比 | 分辨率 | 适用场景 |
+|--------|--------|----------|
+| 16:9 | 1280×720 | 横向视频（默认） |
+| 9:16 | 720×1280 | 竖屏短视频 |
+| 1:1 | 720×720 | 正方形 |
+| 4:3 | 960×720 | 传统比例 |
+| 3:4 | 720×960 | 竖版海报 |
+| 21:9 | 1680×720 | 超宽 cinematic |
 
 ## 环境变量参考
 
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
-| `AGNES_MEDIA_API_KEY` | Agnes API Key（推荐） | _(必须设置)_ |
+| `AGNES_MEDIA_API_KEY` | Agnes API Key（推荐，也可存到 DSH credentials） | _(必须设置)_ |
 | `AGNES_API_KEY` | 备用 API Key | — |
-| `AGNES_MEDIA_DOMAIN` | 节点选择：`cn` 为国内，其他为国际 | `com` |
-| `AGNES_MEDIA_BASE_URL` | 完整自定义 Base URL（覆盖域名）。必须以 `/v1` 结尾。 | _(自动从域名生成)_ |
+| `AGNES_MEDIA_BASE_URL` | 完整自定义 Base URL（海外/自定义端点用）。插件自动追加 `/v1` | `https://apihub.agnes-ai.cn` |
+| `AGNES_MEDIA_DOMAIN` | 已保留但不再影响端点（实测旧节点 404/401，统一走 apihub） | — |
 
 ## DSH Credentials 支持
 
@@ -200,6 +208,7 @@ Agnes Video V2.0 要求 `num_frames` 必须满足集合 `{8n + 1 | n ≥ 1, 8n+1
 
 | 版本 | 日期 | 更新内容 |
 |------|------|---------|
+| v1.6.0 | 2026-09-01 | 实测修复：默认端点统一 `apihub.agnes-ai.cn`；视频切换到 `agnes-video-2.5-flash`（`seconds/mode/size='720P'/aspect_ratio` 参数）；新增图生视频 `reference_image_url`；轮询改为 `/agnesapi?video_id=&model_name=`；轮询上限 3→6 分钟；停止发送 `negative_prompt` |
 | v1.5.0 | 2026-08-31 | 修正端点 URL 到 apihub，支持 DSH credentials 系统 |
 | v1.4.0 | 2026-08-28 | 升级视频模型至 agnes-video-2.5-flash（已回退） |
 | v1.2.0 | 2026-08-21 | 修正端点 URL：`apihub.agnes-ai.cn` → `api.agnes-ai.cn` |
