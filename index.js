@@ -29,8 +29,8 @@ export const exports = [name];
 /* ------------------------------------------------------------------ */
 /*  Configurable endpoint — default .com; override via env vars       */
 /* ------------------------------------------------------------------ */
-const POLL_INTERVAL_MS = 3000;
-const MAX_POLL_COUNT = 120; // ~6 minutes of polling
+const POLL_INTERVAL_MS = 5000;
+const MAX_POLL_COUNT = 120; // ~10 minutes of polling (excluding backoff pauses)
 
 let _baseURL = null;
 
@@ -430,19 +430,34 @@ export function apply(ctx) {
 				await sleep(POLL_INTERVAL_MS, exec.signal);
 				assertSignal(exec);
 
-				const statusRes = await fetch(
-					`${getBaseURL().replace('/v1', '')}/agnesapi?video_id=${encodeURIComponent(videoId)}&model_name=agnes-video-2.5-flash`,
-					{
-						headers: { Authorization: `Bearer ${key}` },
-						signal: exec.signal,
-					},
-				);
-
-				const statusData = await statusRes.json();
-				if (!statusRes.ok) {
-					throw new Error(
-						`Video status check failed (${statusRes.status}): ${JSON.stringify(statusData)}`,
+				/* 429 rate limits, 5xx and network hiccups are transient: back off and retry. */
+				let statusData = null;
+				let transient = false;
+				try {
+					const statusRes = await fetch(
+						`${getBaseURL().replace('/v1', '')}/agnesapi?video_id=${encodeURIComponent(videoId)}&model_name=agnes-video-2.5-flash`,
+						{
+							headers: { Authorization: `Bearer ${key}` },
+							signal: exec.signal,
+						},
 					);
+					statusData = await statusRes.json();
+					if (!statusRes.ok) {
+						if (statusRes.status === 429 || statusRes.status >= 500) {
+							transient = true;
+						} else {
+							throw new Error(
+								`Video status check failed (${statusRes.status}): ${JSON.stringify(statusData)}`,
+							);
+						}
+					}
+				} catch (e) {
+					if (e instanceof Error && e.message?.startsWith('Video status check failed')) throw e;
+					transient = true; // network error or invalid JSON body
+				}
+				if (transient) {
+					await sleep(10_000, exec.signal);
+					continue;
 				}
 
 				const status = statusData.status ?? statusData.data?.status;

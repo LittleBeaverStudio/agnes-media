@@ -5,7 +5,7 @@ two host tools for the Agnes AI media models, so the agent can generate images
 and videos during a conversation.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![DeepSeek Harness](https://img.shields.io/badge/dsh-plugin-v1.6.0-blue)](https://github.com/deepseek-ai/deepseek-harness)
+[![DeepSeek Harness](https://img.shields.io/badge/dsh-plugin-v1.7.0-blue)](https://github.com/deepseek-ai/deepseek-harness)
 [![Agnes AI](https://img.shields.io/badge/agnes-api-free-green)](https://agnes-ai.cn)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D22-brightgreen)](https://nodejs.org)
 [![npm](https://img.shields.io/badge/npm-v10%2B-red)](https://npmjs.com)
@@ -16,7 +16,7 @@ and videos during a conversation.
 
 - **文生图**：使用 `agnes-image-2.1-flash` 模型生成高质量图片
 - **文生视频**：使用 `agnes-video-2.5-flash` 模型生成 4-12 秒短视频（默认 5 秒）
-- **图生视频**：传入 `reference_image_url` 即可使用参考图（reference 模式）
+- **图生视频**：传入 `reference_image_url` 即可使用参考图（reference 模式），支持 429 限流退避重试
 - **免费无限**：Agnes AI 提供免费 API 调用
 - **国内直连**：实测 `api.agnes-ai.com`/`.cn` 旧节点均 404/401，默认统一走 `apihub.agnes-ai.cn`
 - **凭证集成**：支持环境变量或 DSH credentials 系统
@@ -198,6 +198,19 @@ Agnes Video 2.5 Flash 固定 720P，支持以下宽高比：
 - 插件在调用时从进程环境读取 Key；永远不会持久化或记录。
 - 如果使用 DSH credentials，Key 会加密存储在本地凭证数据库中。
 
+## 版本历史
+
+| 版本 | 日期 | 更新内容 |
+|------|------|---------|
+| v1.7.0 | 2026-09-01 | 新增 429 限流退避重试：瞬态错误（429/5xx/网络抖动）退避 10 秒继续轮询，不再直接报错；轮询间隔 3s→5s，上限约 10 分钟 |
+| v1.6.0 | 2026-09-01 | 实测修复：默认端点统一 `apihub.agnes-ai.cn`；视频切换到 `agnes-video-2.5-flash`（`seconds/mode/size='720P'/aspect_ratio` 参数）；新增图生视频 `reference_image_url`；轮询改为 `/agnesapi?video_id=&model_name=`；轮询上限 3→6 分钟；停止发送 `negative_prompt` |
+| v1.5.0 | 2026-08-31 | 修正端点 URL 到 apihub，支持 DSH credentials 系统 |
+| v1.4.0 | 2026-08-28 | 升级视频模型至 agnes-video-2.5-flash（已回退） |
+| v1.2.0 | 2026-08-21 | 修正端点 URL：`apihub.agnes-ai.cn` → `api.agnes-ai.cn` |
+| v1.1.1 | 2026-08-21 | 添加 API Key 获取指南和 401 错误排查表 |
+| v1.1.0 | 2026-08-21 | 支持国内外双端点，通过 `AGNES_MEDIA_DOMAIN` 切换 |
+| v1.0.1 | 2026-08-20 | 初始版本，修复 Agnes Video API 参数对齐问题 |
+
 ## 许可证
 
 [MIT](LICENSE)
@@ -208,7 +221,7 @@ Agnes Video 2.5 Flash 固定 720P，支持以下宽高比：
 
 | 版本 | 日期 | 更新内容 |
 |------|------|---------|
-| v1.6.0 | 2026-09-01 | 实测修复：默认端点统一 `apihub.agnes-ai.cn`；视频切换到 `agnes-video-2.5-flash`（`seconds/mode/size='720P'/aspect_ratio` 参数）；新增图生视频 `reference_image_url`；轮询改为 `/agnesapi?video_id=&model_name=`；轮询上限 3→6 分钟；停止发送 `negative_prompt` |
+| v1.7.0 | 2026-09-01 | 新增 429 限流退避重试：瞬态错误（429/5xx/网络抖动）退避 10 秒继续轮询，不再直接报错 |
 | v1.5.0 | 2026-08-31 | 修正端点 URL 到 apihub，支持 DSH credentials 系统 |
 | v1.4.0 | 2026-08-28 | 升级视频模型至 agnes-video-2.5-flash（已回退） |
 | v1.2.0 | 2026-08-21 | 修正端点 URL：`apihub.agnes-ai.cn` → `api.agnes-ai.cn` |
