@@ -7,15 +7,15 @@
  *   - generate_image  → POST /v1/images/generations  (agnes-image-2.1-flash)
  *   - generate_video  → POST /v1/videos + polling     (agnes-video-2.5-flash)
  *
- * Auth: AGNES_MEDIA_API_KEY (or AGNES_API_KEY fallback).
+ * Auth: AGNES_MEDIA_API_KEY (or AGNES_API_KEY fallback, or DSH credentials).
  * The key is read from the process environment or DSH credentials system at call time — never hardcode it.
  *
  * Endpoints:
- *   - Measured (2026-09): the legacy api.agnes-ai.com/.cn nodes return 404/401;
- *     only https://apihub.agnes-ai.cn works from mainland China. Both branches of
- *     getBaseURL() therefore default to it regardless of AGNES_MEDIA_DOMAIN.
- *   - Custom / international: set AGNES_MEDIA_BASE_URL to the full base URL,
- *     e.g. https://apihub.agnes-ai.com (the plugin appends /v1).
+ *   - Measured result: the old api.agnes-ai.com/.cn nodes all 404/401;
+ *     only https://apihub.agnes-ai.cn is reachable from mainland China.
+ *     Both branches of getBaseURL() therefore point at it by default.
+ *   - Custom: set AGNES_MEDIA_BASE_URL to any OpenAI-compatible Agnes endpoint
+ *     (international users can restore https://apihub.agnes-ai.com/v1 that way).
  *
  * This file is plain ESM loaded by the dsh Loader: it must not import any
  * package that is not already resolvable from the running dsh installation,
@@ -291,7 +291,9 @@ export function apply(ctx) {
 			'Asynchronous: submits a job then polls until the video URL is ready (up to ~6 min).\n\n' +
 			'**Duration** — 4 to 12 seconds. Default 5.\n\n' +
 			'**Aspect ratios** — "16:9" (default), "9:16", "1:1", "4:3", "3:4", "21:9".\n' +
-			'**Resolution** — Fixed at 720p for all aspect ratios.',
+			'**Resolution** — Fixed at 720p for all aspect ratios.\n' +
+			'**References** — optional `reference_image_url` (1 张) 或 `reference_image_urls`\n' +
+			'(数组，1–5 张，支持 https 或 data:URI)；提供任一即启用 reference 模式。\n',
 		parameters: {
 			type: 'object',
 			properties: {
@@ -327,7 +329,13 @@ export function apply(ctx) {
 				reference_image_url: {
 					type: 'string',
 					description:
-						'Optional publicly accessible HTTPS image URL used as the character reference in reference mode. Local file paths are not accepted by Agnes.',
+						'Optional publicly accessible HTTPS image URL used as the character reference in reference mode. Local file paths are not accepted by Agnes. (Deprecated: use reference_image_urls for multiple images)',
+				},
+				reference_image_urls: {
+					type: 'array',
+					items: { type: 'string' },
+					description:
+						'Optional list of 1-5 reference image URLs (https or data:URI). First image is the primary character/style anchor; extras add props or UI references.',
 				},
 			},
 			required: ['prompt'],
@@ -375,19 +383,30 @@ export function apply(ctx) {
 			/* Resolve duration */
 			const duration = validateDuration(args.duration);
 
+			/* Collect reference images (single param kept for backwards compat). */
+			const refUrls = [];
+			if (typeof args.reference_image_url === 'string' && args.reference_image_url.trim()) {
+				refUrls.push(args.reference_image_url.trim());
+			}
+			if (Array.isArray(args.reference_image_urls)) {
+				for (const u of args.reference_image_urls) {
+					if (typeof u === 'string' && u.trim()) refUrls.push(u.trim());
+				}
+			}
+			if (refUrls.length > 5) refUrls.length = 5; // Agnes caps reference images at 5
+
 			/* Build request body for Agnes Video 2.5 Flash. */
 			const requestBody = {
 				model: 'agnes-video-2.5-flash',
 				prompt: args.prompt,
 				seconds: String(duration),
-				mode: args.reference_image_url ? 'reference' : 'text',
+				mode: refUrls.length > 0 ? 'reference' : 'text',
 				size: '720P',
 				aspect_ratio: ratioKey,
 				n: 1,
 			};
-
-			if (args.reference_image_url) {
-				requestBody.images = [args.reference_image_url];
+			if (refUrls.length > 0) {
+				requestBody.images = refUrls;
 			}
 			if (args.seed != null && typeof args.seed === 'number') {
 				requestBody.seed = Math.floor(args.seed);
