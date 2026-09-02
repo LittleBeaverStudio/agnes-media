@@ -4,7 +4,7 @@
  * Registers two host tools that route through the Agnes AI media endpoints
  * (the standard chat-completions route rejects these models with a 400):
  *
- *   - generate_image  → POST /v1/images/generations  (agnes-image-2.1-flash)
+ *   - generate_image  → POST /v1/images/generations  (agnes-image-2.5-flash)
  *   - generate_video  → POST /v1/videos + polling     (agnes-video-2.5-flash)
  *
  * Auth: AGNES_MEDIA_API_KEY (or AGNES_API_KEY fallback, or DSH credentials).
@@ -181,7 +181,7 @@ export function apply(ctx) {
 	ctx.tools.register({
 		name: 'generate_image',
 		description:
-			'Generate image(s) from a text prompt using the agnes-image-2.1-flash model.\n\n' +
+			'Generate image(s) from a text prompt using the agnes-image-2.5-flash model.\n\n' +
 			'Returns public image URL(s). After a successful call, show the image(s) to the user\nby including markdown image syntax `![description](url)` in your reply.',
 		parameters: {
 			type: 'object',
@@ -240,7 +240,7 @@ export function apply(ctx) {
 			const sizeStr = `${width}x${height}`;
 
 			const body = {
-				model: 'agnes-image-2.1-flash',
+				model: 'agnes-image-2.5-flash',
 				prompt: args.prompt,
 				size: sizeStr,
 			};

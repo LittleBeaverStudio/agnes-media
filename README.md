@@ -5,7 +5,7 @@ two host tools for the Agnes AI media models, so the agent can generate images
 and videos during a conversation.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![DeepSeek Harness](https://img.shields.io/badge/dsh-plugin-v1.8.1-blue)](https://github.com/deepseek-ai/deepseek-harness)
+[![DeepSeek Harness](https://img.shields.io/badge/dsh-plugin-v1.8.3-blue)](https://github.com/deepseek-ai/deepseek-harness)
 [![Agnes AI](https://img.shields.io/badge/agnes-api-free-green)](https://agnes-ai.cn)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D22-brightgreen)](https://nodejs.org)
 [![npm](https://img.shields.io/badge/npm-v10%2B-red)](https://npmjs.com)
@@ -14,7 +14,7 @@ and videos during a conversation.
 
 ## 🌟 功能特性
 
-- **文生图**：使用 `agnes-image-2.1-flash` 模型生成高质量图片
+- **文生图**：使用 `agnes-image-2.5-flash` 模型生成高质量图片
 - **文生视频**：使用 `agnes-video-2.5-flash` 模型生成 4-12 秒短视频（默认 5 秒）
 - **图生视频**：传入 `reference_image_url`（单图）或 `reference_image_urls`（多图数组，最多 5 张）即可使用参考图，支持 429 限流退避重试
 - **免费无限**：Agnes AI 提供免费 API 调用
@@ -139,7 +139,7 @@ dsh plugin --profile web add github:LittleBeaverStudio/agnes-media
 
 ### `generate_image`
 
-使用 `agnes-image-2.1-flash` 模型从文本提示生成图片。
+使用 `agnes-image-2.5-flash` 模型从文本提示生成图片。
 
 **参数：**
 - `prompt`（必需）：图片的详细文本描述。
@@ -214,6 +214,7 @@ Agnes Video 2.5 Flash 固定 720P，支持以下宽高比：
 
 | 版本 | 日期 | 更新内容 |
 |------|------|---------|
+| v1.8.3 | 2026-09-02 | 文生图模型升级 `agnes-image-2.1-flash` → `agnes-image-2.5-flash`（最新） |
 | v1.8.2 | 2026-09-02 | 修复 `AGNES_MEDIA_BASE_URL` 双 `/v1`（传 `/v1` 结尾值会打出 `/v1/v1` 得到误导性 404，现幂等兼容两种写法）；实测修正端点文档：key 与节点存在代际绑定（platform 签发的 key 在 `apihub.agnes-ai.cn` 401、在 `api.agnes-ai.cn` 200），401 时先换端点再换 key；`negative_prompt` 参数描述标注为 DEPRECATED（API 400 拒收该字段，插件从不发送） |
 | v1.8.1 | 2026-09-01 | 修复多图参考支持：index.js 代码已包含 `reference_image_urls` 数组参数，兼容旧 `reference_image_url`，最多 5 张参考图 |
 | v1.8.0 | 2026-09-01 | 新增多图参考支持（README + package.json，index.js 遗漏未提交） |
