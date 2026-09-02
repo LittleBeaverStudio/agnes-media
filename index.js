@@ -40,7 +40,10 @@ function getBaseURL() {
 
 	const customFull = process.env.AGNES_MEDIA_BASE_URL;
 	if (customFull && typeof customFull === 'string') {
-		_baseURL = customFull.replace(/\/+$/, '') + '/v1';
+		// Idempotent: accept both with and without a trailing /v1 (a /v1-terminated
+		// value used to produce /v1/v1 and a misleading 404 "Invalid URL").
+		const trimmed = customFull.replace(/\/+$/, '');
+		_baseURL = trimmed.endsWith('/v1') ? trimmed : trimmed + '/v1';
 		return _baseURL;
 	}
 
@@ -319,7 +322,9 @@ export function apply(ctx) {
 				negative_prompt: {
 					type: 'string',
 					description:
-						'Description of things to avoid in the generated video. E.g. "blurry, shaky camera, low quality".',
+						'DEPRECATED — do not use. The Agnes 2.5 Flash API rejects this field with 400 ' +
+						'"not an allowed request field", so the plugin never sends it (verified 2026-09-02). ' +
+						'Describe what to avoid inside prompt instead.',
 				},
 				seed: {
 					type: 'integer',

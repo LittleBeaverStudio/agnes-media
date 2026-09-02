@@ -33,7 +33,7 @@ and videos during a conversation.
 | 中国大陆 | [platform.agnes-ai.cn](https://platform.agnes-ai.cn) |
 | 国际 | [platform.agnes-ai.com](https://platform.agnes-ai.com) |
 
-**两个平台使用同一个 API Key** — 只需要切换端点 URL。
+**两个平台各自签发 Key** — 注意 Key 与节点存在代际绑定，并非处处通用（见下文「API Key 与端点选择」的实测表格）。
 
 ### 获取步骤
 
@@ -63,7 +63,8 @@ curl -s https://apihub.agnes-ai.cn/v1/models \
   -H "Authorization: Bearer YOUR_KEY_HERE" | head -c 500
 ```
 
-如果返回模型数据，说明 Key 有效；如果返回 `{"error":{"message":"无效的令牌"...}}`，请重新生成 Key。
+如果返回模型数据，说明 Key 在该节点有效；如果返回 `{"error":{"message":"无效的令牌"...}}`，
+**先换一个端点重试**（见下文实测表格——Key 与节点有代际绑定），换节点仍 401 再重新生成 Key。
 
 ---
 
@@ -75,13 +76,24 @@ curl -s https://apihub.agnes-ai.cn/v1/models \
    - **中国大陆用户**：使用 `.cn` 平台 — 速度更快，无需代理
    - **海外用户**：使用 `.com` 平台
 2. 在控制台设置 → API 密钥中创建 API Key
-3. 同一个 Key 在 `.cn` 和 `.com` 节点都可用
+3. 创建 API Key（Key 与签发它的节点存在代际绑定，见下方实测表格）
 
 ### 选择合适的端点
 
-**重要（2026-09 实测）**：旧的 `api.agnes-ai.com` / `api.agnes-ai.cn` 节点已全部 404/401，
-当前只有 `apihub.agnes-ai.cn` 可用。因此插件默认统一指向 `apihub.agnes-ai.cn`，
-`AGNES_MEDIA_DOMAIN` 已不再影响端点选择（保留仅为向后兼容）。
+**端点现状（2026-09-02 实测，中国大陆网络，`platform.agnes-ai.cn` 签发的 key）**：
+节点与 key 存在代际绑定，同一把 key 并非在所有节点都有效：
+
+| 端点 | 实测结果 |
+|------|---------|
+| `api.agnes-ai.cn` | ✅ 200（旧平台体系 key 的正确节点） |
+| `apihub.agnes-ai.cn` — **本插件默认** | ❌ 401 无效的令牌（对上述 key） |
+| `apihub.agnes-ai.com` | ✅ 200 |
+| `api.agnes-ai.com` | ❌ 404 |
+
+本插件默认指向 `apihub.agnes-ai.cn`（对 dsh 生态新签发的 key 有效）。
+**遇到 `401 无效的令牌` 时先换端点、再换 key**：设置
+`AGNES_MEDIA_BASE_URL=https://api.agnes-ai.cn` 通常即可恢复。
+`AGNES_MEDIA_DOMAIN` 保留仅为向后兼容，不再影响端点选择。
 
 | 如果你… | 这样做 |
 |---------|--------|
@@ -202,6 +214,7 @@ Agnes Video 2.5 Flash 固定 720P，支持以下宽高比：
 
 | 版本 | 日期 | 更新内容 |
 |------|------|---------|
+| v1.8.2 | 2026-09-02 | 修复 `AGNES_MEDIA_BASE_URL` 双 `/v1`（传 `/v1` 结尾值会打出 `/v1/v1` 得到误导性 404，现幂等兼容两种写法）；实测修正端点文档：key 与节点存在代际绑定（platform 签发的 key 在 `apihub.agnes-ai.cn` 401、在 `api.agnes-ai.cn` 200），401 时先换端点再换 key；`negative_prompt` 参数描述标注为 DEPRECATED（API 400 拒收该字段，插件从不发送） |
 | v1.8.1 | 2026-09-01 | 修复多图参考支持：index.js 代码已包含 `reference_image_urls` 数组参数，兼容旧 `reference_image_url`，最多 5 张参考图 |
 | v1.8.0 | 2026-09-01 | 新增多图参考支持（README + package.json，index.js 遗漏未提交） |
 | v1.7.0 | 2026-09-01 | 新增 429 限流退避重试：瞬态错误（429/5xx/网络抖动）退避 10 秒继续轮询，不再直接报错；轮询间隔 3s→5s，上限约 10 分钟 |
